@@ -10,7 +10,7 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signO
 import { getFirestore, doc, setDoc, onSnapshot, collection, addDoc, deleteDoc } from 'firebase/firestore';
 
 // --- [Firebase 설정] ---
-// 👇 여기에 본인의 파이어베이스 설정값을 붙여넣으세요. (const firebaseConfig는 한 번만!)
+// 👇 Vercel에 배포할 때는 아래에 본인의 파이어베이스 설정값을 입력하세요.
 const firebaseConfig = {
   apiKey: "AIzaSyAkzmoK1dQrxfXFiPVnhhfUvRITM3nM3g4",
   authDomain: "readybaby-bd5bb.firebaseapp.com",
@@ -22,7 +22,13 @@ const firebaseConfig = {
 };
 
 
+// 캔버스 미리보기와 Vercel 배포를 동시에 지원하는 안전한 설정 (중복 선언 방지)
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : localFirebaseConfig;
+const environmentAppId = typeof __app_id !== 'undefined' ? __app_id : 'readybaby-app';
 
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
 
 // --- 초기 데이터셋 ---
 const INITIAL_CHECKLIST = [
@@ -106,8 +112,15 @@ export default function App() {
   // --- 구글 로그인 로직 ---
   useEffect(() => {
     const initAuth = async () => {
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        await signInWithCustomToken(auth, __initial_auth_token);
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else if (typeof __firebase_config !== 'undefined') {
+          // 캔버스 미리보기 환경을 위한 익명 로그인 폴백
+          await signInAnonymously(auth);
+        }
+      } catch (error) {
+        console.error("인증 초기화 에러:", error);
       }
     };
     initAuth();
@@ -120,11 +133,11 @@ export default function App() {
   }, []);
 
   const handleGoogleLogin = async () => {
-    // API 키 미입력 방어코드
-    if (firebaseConfig.apiKey.includes("YOUR") || firebaseConfig.apiKey.includes("본인의")) {
+    // API 키 미입력 방어코드 (캔버스 미리보기 환경이 아닐 때만 체크)
+    if (typeof __firebase_config === 'undefined' && (firebaseConfig.apiKey.includes("YOUR") || firebaseConfig.apiKey.includes("본인의"))) {
       setModalContent({
         title: "설정 오류", 
-        text: <p>Firebase API 키가 기본값으로 되어 있습니다.<br/><br/>코드 상단의 <b>firebaseConfig</b> 영역에 본인의 프로젝트 정보를 입력한 후 다시 시도해주세요.</p>
+        text: <p>Firebase API 키가 기본값으로 되어 있습니다.<br/><br/>코드 상단의 <b>localFirebaseConfig</b> 영역에 본인의 프로젝트 정보를 입력한 후 다시 시도해주세요.</p>
       });
       return;
     }
