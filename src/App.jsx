@@ -9,7 +9,8 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut, signInWithCustomToken, signInAnonymously } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot, collection, addDoc, deleteDoc } from 'firebase/firestore';
 
-// --- [환경 자동 감지 Firebase 설정] ---
+// --- [Firebase 설정] ---
+// 👇 여기에 본인의 파이어베이스 설정값을 붙여넣으세요. (const firebaseConfig는 한 번만!)
 const firebaseConfig = {
   apiKey: "AIzaSyAkzmoK1dQrxfXFiPVnhhfUvRITM3nM3g4",
   authDomain: "readybaby-bd5bb.firebaseapp.com",
@@ -20,20 +21,19 @@ const firebaseConfig = {
   measurementId: "G-11K09F8QFY"
 };
 
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : localFirebaseConfig;
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const environmentAppId = typeof __app_id !== 'undefined' ? __app_id : 'readybaby-app';
+const environmentAppId = 'readybaby-app';
 
-// --- 초기 데이터셋 (체크리스트) ---
+// --- 초기 데이터셋 ---
 const INITIAL_CHECKLIST = [
   { id: 'first_trimester', title: '임신 초기 (확인 ~ 12주)', icon: <CalendarHeart className="w-5 h-5" />, color: 'bg-rose-50 border-rose-200 text-rose-800', tasks: [{ id: 't1', title: '산부인과 검진 및 임신확인서 발급', desc: '아기집 확인 후 바우처 신청을 위한 확인서 수령.', isCustom: false }, { id: 't2', title: '국민행복카드 신청', desc: '정부 지원금을 위한 카드 발급.', isCustom: false }, { id: 't3', title: '보건소 임산부 등록 및 엽산 수령', desc: '엽산제 수령, 뱃지, 주차증 발급.', isCustom: false }, { id: 't_new1', title: '입덧약 처방 (필요시)', desc: '심할 경우 병원에서 약을 처방받으세요.', isCustom: false }, { id: 't4', title: '태아보험 가입 상담', desc: '1차 기형아 검사 전(11-12주) 가입 권장.', isCustom: false }, { id: 't5', title: '산후조리원 예약', desc: '인기 있는 곳은 마감이 빠릅니다.', isCustom: false }, { id: 't6', title: '임신기 근로시간 단축 신청', desc: '12주 이내 직장인 2시간 단축 권리 행사.', isCustom: false }] },
   { id: 'second_trimester', title: '임신 중기 (13주 ~ 27주)', icon: <Stethoscope className="w-5 h-5" />, color: 'bg-emerald-50 border-emerald-200 text-emerald-800', tasks: [{ id: 't7', title: '철분제 복용 시작', desc: '16주부터 철분제 필수 복용.', isCustom: false }, { id: 't_new2', title: '튼살크림/오일 마사지 시작', desc: '아침저녁으로 보습을 충분히 해주세요.', isCustom: false }, { id: 't8', title: '정밀 초음파 및 1/2차 기형아 검사', desc: '목투명대 검사 및 태아 장기 형성 확인.', isCustom: false }, { id: 't9', title: '임신성 당뇨(임당) 검사', desc: '24~28주 사이 진행.', isCustom: false }, { id: 't_new3', title: '의료용 압박스타킹 처방', desc: '병원에서 보험 적용받아 구입하세요.', isCustom: false }, { id: 't10', title: '치과 검진 (스케일링)', desc: '안정기일 때 예방 치료 권장.', isCustom: false }, { id: 't11', title: '태교 여행 및 만삭사진', desc: '무리 없는 선에서 추억 남기기.', isCustom: false }] },
   { id: 'third_trimester', title: '임신 후기 (28주 ~ 출산)', icon: <Baby className="w-5 h-5" />, color: 'bg-blue-50 border-blue-200 text-blue-800', tasks: [{ id: 't12', title: '백일해 백신 접종', desc: '27~36주 사이 부부 필수 접종.', isCustom: false }, { id: 't13', title: '아기 용품 세탁 및 소독', desc: '미리 세탁하여 지퍼백 보관.', isCustom: false }, { id: 't_new4', title: '산모 출산 가방(캐리어) 싸기', desc: '34주부터 병원/조리원 짐 싸기.', isCustom: false }, { id: 't15', title: '산후도우미 정부지원 신청', desc: '출산 예정일 40일 전부터 보건소/복지로 신청.', isCustom: false }, { id: 't_new5', title: '신생아 심폐소생술/교육', desc: '응급처치법을 익혀두세요.', isCustom: false }, { id: 't16', title: '막달 검사 및 호흡법 연습', desc: '심전도, 피검사 및 라마즈 연습.', isCustom: false }] }
 ];
 
-// --- 초기 데이터셋 (육아템 + 산모용품 통합) ---
 const INITIAL_GEAR = [
   { id: 'must_have', title: '1순위. 수유 & 위생 (절대 필수)', icon: <Star className="w-5 h-5" fill="currentColor" />, color: 'bg-amber-50 border-amber-200 text-amber-800', tasks: [{ id: 'g_br', title: '브라운 귀적외선 체온계', desc: '6520 모델 추천. 발열은 응급상황입니다.', isCustom: false }, { id: 'g_f1', title: '분유 제조기 / 자동 분유포트', desc: '새벽 수유 피로도를 줄여주는 1등 공신.', isCustom: false }, { id: 'g_f2', title: '젖병 소독기 & 젖병', desc: 'UV소독기 및 배앓이 방지 젖병 혼합.', isCustom: false }, { id: 'g_h1', title: '기저귀 갈이대', desc: '엄마 아빠의 허리를 지켜줍니다.', isCustom: false }, { id: 'g_h2', title: '아기 욕조 2개', desc: '씻기용과 헹굼용.', isCustom: false }, { id: 'g_c1', title: '밤부 가제손수건 40장', desc: '먼지가 적은 밤부 소재 엠보/거즈 혼합.', isCustom: false }] },
   { id: 'quality_of_life', title: '2순위. 수면 & 진정 (삶의 질 상승)', icon: <Heart className="w-5 h-5" fill="currentColor" />, color: 'bg-rose-50 border-rose-200 text-rose-800', tasks: [{ id: 'g_s1', title: '스와들업 (모로반사 방지)', desc: '놀라 깨는 것을 막아주는 수면 조끼.', isCustom: false }, { id: 'g_s2', title: '역류방지쿠션 (역방쿠)', desc: '수유 후 게워냄을 방지합니다.', isCustom: false }, { id: 'g_s3', title: '아기 침대 / 범퍼 침대', desc: '100일까지는 가드형 높은 침대를 추천합니다.', isCustom: false }, { id: 'g_h3', title: '자동 콧물 흡입기 (노시부 등)', desc: '감기 걸렸을 때 최고의 육아템.', isCustom: false }] },
@@ -91,15 +91,18 @@ export default function App() {
     setTimeout(() => setToastMsg(''), 2500);
   };
 
-  // --- 데이터 병합 유틸 ---
+  // --- 기존 데이터 병합 유틸 함수 ---
   const mergeData = (initialData, savedData) => {
     if (!savedData) return initialData;
     return initialData.map(initCat => {
       const savedCat = savedData.find(c => c.id === initCat.id);
       if (!savedCat) return initCat;
+      
       const mergedTasks = [...savedCat.tasks];
       initCat.tasks.forEach(initTask => {
-        if (!mergedTasks.find(t => t.id === initTask.id)) mergedTasks.push(initTask);
+        if (!mergedTasks.find(t => t.id === initTask.id)) {
+          mergedTasks.push(initTask);
+        }
       });
       return { ...savedCat, tasks: mergedTasks };
     });
@@ -114,6 +117,7 @@ export default function App() {
       }
     };
     initAuth();
+
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setAuthLoading(false);
@@ -125,12 +129,18 @@ export default function App() {
     try {
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
-    } catch (error) { console.error(error); }
+    } catch (error) {
+      console.error("구글 로그인 에러:", error);
+    }
   };
 
   const handleLogout = async () => {
     if(window.confirm('로그아웃 하시겠습니까?')) {
-      try { await signOut(auth); } catch (error) { console.error(error); }
+      try {
+        await signOut(auth);
+      } catch (error) {
+        console.error("로그아웃 에러:", error);
+      }
     }
   };
 
@@ -140,9 +150,10 @@ export default function App() {
     return () => clearInterval(interval);
   }, [currentContraction]);
 
-  // --- 데이터 동기화 (Firestore) ---
+  // --- 데이터 동기화 ---
   useEffect(() => {
     if (!user) return;
+    
     const stateDocRef = doc(db, 'artifacts', environmentAppId, 'users', user.uid, 'appData', 'state');
     const unsubState = onSnapshot(stateDocRef, (docSnap) => {
       if (docSnap.exists()) {
@@ -150,8 +161,13 @@ export default function App() {
         setCompletedTasks(data.tasks || {}); setTaskNotes(data.notes || {});
         setCompletedGear(data.completedGear || {}); setGearNotes(data.gearNotes || {});
         if(data.dueDate !== undefined) setDueDate(data.dueDate);
-        setChecklistData(mergeData(INITIAL_CHECKLIST, data.checklistData));
-        setGearData(mergeData(INITIAL_GEAR, data.gearData));
+        
+        if(data.checklistData) setChecklistData(mergeData(INITIAL_CHECKLIST, data.checklistData));
+        else setChecklistData(INITIAL_CHECKLIST);
+        
+        if(data.gearData) setGearData(mergeData(INITIAL_GEAR, data.gearData));
+        else setGearData(INITIAL_GEAR);
+        
         if(data.weightRecords) setWeightRecords(data.weightRecords);
         if(data.hospitalQuestions) setHospitalQuestions(data.hospitalQuestions);
         if(data.contractions) setContractions(data.contractions);
@@ -164,13 +180,15 @@ export default function App() {
       const entries = []; snapshot.forEach(doc => entries.push({ id: doc.id, ...doc.data() }));
       entries.sort((a, b) => b.createdAt - a.createdAt); setDiaryEntries(entries);
     });
+
     return () => { unsubState(); unsubDiary(); };
   }, [user]);
 
   const saveStateToCloud = async (updates) => {
     if (!user) return;
-    try { await setDoc(doc(db, 'artifacts', environmentAppId, 'users', user.uid, 'appData', 'state'), updates, { merge: true }); } 
-    catch (error) { console.error(error); }
+    try { 
+      await setDoc(doc(db, 'artifacts', environmentAppId, 'users', user.uid, 'appData', 'state'), updates, { merge: true }); 
+    } catch (error) { console.error(error); }
   };
 
   // --- 각종 기능 핸들러 ---
@@ -216,11 +234,14 @@ export default function App() {
   const toggleGear = (taskId) => { const newGear = { ...completedGear, [taskId]: !completedGear[taskId] }; setCompletedGear(newGear); saveStateToCloud({ completedGear: newGear }); };
   const handleGearNoteBlur = (taskId, noteValue) => { const newNotes = { ...gearNotes, [taskId]: noteValue }; setGearNotes(newNotes); saveStateToCloud({ gearNotes: newNotes }); };
   const saveDueDate = (dateStr) => { setDueDate(dateStr); setIsEditingDueDate(false); saveStateToCloud({ dueDate: dateStr }); };
+  
   const handleAddDiary = async (e) => {
     e.preventDefault(); if (!user || !newDiaryText.trim()) return;
     await addDoc(collection(db, 'artifacts', environmentAppId, 'users', user.uid, 'diary_entries'), { text: newDiaryText.trim(), createdAt: Date.now(), authorId: user.uid, authorName: user.displayName || '부모님' });
     setNewDiaryText('');
   };
+
+  // --- 건강 수첩 & 진통 타이머 핸들러 ---
   const addWeight = (e) => {
     e.preventDefault(); if(!newWeight || isNaN(newWeight)) return;
     const newRecords = [...weightRecords, { id: Date.now(), weight: parseFloat(newWeight), date: Date.now() }];
@@ -268,6 +289,7 @@ export default function App() {
     const conceptionDate = new Date(due); conceptionDate.setDate(due.getDate() - 280);
     const pregnantDays = Math.floor((today - conceptionDate) / (1000 * 60 * 60 * 24));
     const weeks = Math.floor(pregnantDays / 7);
+    
     let fruit = ''; let icon = '';
     if (weeks < 12) { fruit = '딸기'; icon = '🍓'; }
     else if (weeks < 16) { fruit = '레몬'; icon = '🍋'; }
@@ -283,7 +305,7 @@ export default function App() {
       backupText += `\n* ${cat.title}\n`;
       cat.tasks.forEach(t => { backupText += `  [${completedTasks[t.id] ? '✓' : ' '}] ${t.title}${taskNotes[t.id] ? ` (메모: ${taskNotes[t.id]})` : ''}\n`; });
     });
-    backupText += `\n=======================================\n\n[🛒 필수 육아템]\n`;
+    backupText += `\n=======================================\n\n[🛒 필수 육아/산모템]\n`;
     gearData.forEach(cat => {
       backupText += `\n* ${cat.title}\n`;
       cat.tasks.forEach(t => { backupText += `  [${completedGear[t.id] ? '✓' : ' '}] ${t.title}${gearNotes[t.id] ? ` (메모: ${gearNotes[t.id]})` : ''}\n`; });
@@ -456,17 +478,17 @@ export default function App() {
           </div>
         )}
 
-        {/* === 출산/육아템 === */}
+        {/* === 육아템 === */}
         {activeTab === 'baby_gear' && (
            <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
              <div className="bg-gradient-to-br from-emerald-500 to-teal-600 p-6 rounded-[2rem] text-white shadow-lg">
-              <div className="flex justify-between items-end mb-3"><span className="text-sm font-medium opacity-90">필수 육아템 구비율</span><span className="text-3xl font-black">{gearProgressPercentage}%</span></div>
+              <div className="flex justify-between items-end mb-3"><span className="text-sm font-medium opacity-90">필수 육아/산모템 구비율</span><span className="text-3xl font-black">{gearProgressPercentage}%</span></div>
               <div className="bg-white/20 rounded-full h-3 overflow-hidden"><div className="bg-white h-full transition-all duration-1000" style={{ width: `${gearProgressPercentage}%` }}></div></div>
             </div>
              {gearData.map((category) => (
               <div key={category.id} className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
-                <div className={`p-4 flex items-center justify-between cursor-pointer ${category.color}`} onClick={() => setExpandedGearCats(prev => ({...prev, [category.id]: !prev[category.id]}))}>
-                  <div className="flex items-center gap-3"><div className="bg-white/90 p-2.5 rounded-2xl shrink-0 shadow-sm">{category.icon}</div><h2 className="font-bold text-[1.05rem]">{category.title}</h2></div>
+                <div className={`p-4 sm:p-5 flex items-center justify-between cursor-pointer ${category.color}`} onClick={() => setExpandedGearCats(prev => ({...prev, [category.id]: !prev[category.id]}))}>
+                  <div className="flex items-center gap-3"><div className="bg-white/90 p-2.5 rounded-2xl shrink-0 shadow-sm">{category.icon}</div><h2 className="font-bold text-[1.05rem] sm:text-lg pr-2 break-keep">{category.title}</h2></div>
                   <ChevronDown className={`w-5 h-5 shrink-0 opacity-70 transition-transform ${expandedGearCats[category.id] ? 'rotate-180' : ''}`}/>
                 </div>
                 {expandedGearCats[category.id] && (
