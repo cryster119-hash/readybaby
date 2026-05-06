@@ -10,7 +10,7 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signO
 import { getFirestore, doc, setDoc, onSnapshot, collection, addDoc, deleteDoc } from 'firebase/firestore';
 
 // --- [Firebase 설정] ---
-// 👇 Vercel에 배포할 때는 아래에 본인의 파이어베이스 설정값을 입력하세요.
+// 👇 Vercel에 배포할 때는 아래 "본인의_..." 부분에 파이어베이스 설정값을 입력하세요.
 const firebaseConfig = {
   apiKey: "AIzaSyAkzmoK1dQrxfXFiPVnhhfUvRITM3nM3g4",
   authDomain: "readybaby-bd5bb.firebaseapp.com",
@@ -22,8 +22,6 @@ const firebaseConfig = {
 };
 
 
-// 캔버스 미리보기와 Vercel 배포를 동시에 지원하는 안전한 설정 (중복 선언 방지)
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : localFirebaseConfig;
 const environmentAppId = typeof __app_id !== 'undefined' ? __app_id : 'readybaby-app';
 
 const app = initializeApp(firebaseConfig);
@@ -137,7 +135,7 @@ export default function App() {
     if (typeof __firebase_config === 'undefined' && (firebaseConfig.apiKey.includes("YOUR") || firebaseConfig.apiKey.includes("본인의"))) {
       setModalContent({
         title: "설정 오류", 
-        text: <p>Firebase API 키가 기본값으로 되어 있습니다.<br/><br/>코드 상단의 <b>localFirebaseConfig</b> 영역에 본인의 프로젝트 정보를 입력한 후 다시 시도해주세요.</p>
+        text: <p>Firebase API 키가 기본값으로 되어 있습니다.<br/><br/>코드 상단의 <b>firebaseConfig</b> 영역에 본인의 프로젝트 정보를 입력한 후 다시 시도해주세요.</p>
       });
       return;
     }
