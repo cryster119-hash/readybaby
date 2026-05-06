@@ -22,10 +22,12 @@ const firebaseConfig = {
 };
 
 
+// 캔버스 환경과 로컬 환경 동시 지원
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : localFirebaseConfig;
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const environmentAppId = 'readybaby-app';
+const environmentAppId = typeof __app_id !== 'undefined' ? __app_id : 'readybaby-app';
 
 // --- 초기 데이터셋 ---
 const INITIAL_CHECKLIST = [
@@ -91,13 +93,11 @@ export default function App() {
     setTimeout(() => setToastMsg(''), 2500);
   };
 
-  // --- 기존 데이터 병합 유틸 함수 ---
   const mergeData = (initialData, savedData) => {
     if (!savedData) return initialData;
     return initialData.map(initCat => {
       const savedCat = savedData.find(c => c.id === initCat.id);
       if (!savedCat) return initCat;
-      
       const mergedTasks = [...savedCat.tasks];
       initCat.tasks.forEach(initTask => {
         if (!mergedTasks.find(t => t.id === initTask.id)) {
@@ -108,12 +108,11 @@ export default function App() {
     });
   };
 
-  // --- 구글 로그인 ---
+  // --- 구글 로그인 로직 ---
   useEffect(() => {
     const initAuth = async () => {
-      if (typeof __initial_auth_token !== 'undefined') {
-        if (__initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
-        else await signInAnonymously(auth);
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
       }
     };
     initAuth();
@@ -126,22 +125,36 @@ export default function App() {
   }, []);
 
   const handleGoogleLogin = async () => {
+    // API 키 미입력 방어코드
+    if (firebaseConfig.apiKey.includes("YOUR") || firebaseConfig.apiKey.includes("본인의")) {
+      setModalContent({
+        title: "설정 오류", 
+        text: <p>Firebase API 키가 기본값으로 되어 있습니다.<br/><br/>코드 상단의 <b>firebaseConfig</b> 영역에 본인의 프로젝트 정보를 입력한 후 다시 시도해주세요.</p>
+      });
+      return;
+    }
+
     try {
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
     } catch (error) {
       console.error("구글 로그인 에러:", error);
+      setModalContent({
+        title: "로그인 실패", 
+        text: <p>구글 로그인 중 오류가 발생했습니다.<br/>{error.message}</p>
+      });
     }
   };
 
-  const handleLogout = async () => {
-    if(window.confirm('로그아웃 하시겠습니까?')) {
-      try {
-        await signOut(auth);
-      } catch (error) {
-        console.error("로그아웃 에러:", error);
+  const handleLogout = () => {
+    setModalContent({
+      title: '로그아웃',
+      text: <p>정말 로그아웃 하시겠습니까?</p>,
+      action: async () => {
+        try { await signOut(auth); setModalContent(null); } 
+        catch (error) { console.error(error); }
       }
-    }
+    });
   };
 
   useEffect(() => {
@@ -152,7 +165,7 @@ export default function App() {
 
   // --- 데이터 동기화 ---
   useEffect(() => {
-    if (!user) return;
+    if (!user || user.isAnonymous) return;
     
     const stateDocRef = doc(db, 'artifacts', environmentAppId, 'users', user.uid, 'appData', 'state');
     const unsubState = onSnapshot(stateDocRef, (docSnap) => {
@@ -161,13 +174,8 @@ export default function App() {
         setCompletedTasks(data.tasks || {}); setTaskNotes(data.notes || {});
         setCompletedGear(data.completedGear || {}); setGearNotes(data.gearNotes || {});
         if(data.dueDate !== undefined) setDueDate(data.dueDate);
-        
         if(data.checklistData) setChecklistData(mergeData(INITIAL_CHECKLIST, data.checklistData));
-        else setChecklistData(INITIAL_CHECKLIST);
-        
         if(data.gearData) setGearData(mergeData(INITIAL_GEAR, data.gearData));
-        else setGearData(INITIAL_GEAR);
-        
         if(data.weightRecords) setWeightRecords(data.weightRecords);
         if(data.hospitalQuestions) setHospitalQuestions(data.hospitalQuestions);
         if(data.contractions) setContractions(data.contractions);
@@ -185,13 +193,13 @@ export default function App() {
   }, [user]);
 
   const saveStateToCloud = async (updates) => {
-    if (!user) return;
+    if (!user || user.isAnonymous) return;
     try { 
       await setDoc(doc(db, 'artifacts', environmentAppId, 'users', user.uid, 'appData', 'state'), updates, { merge: true }); 
     } catch (error) { console.error(error); }
   };
 
-  // --- 각종 기능 핸들러 ---
+  // --- 핸들러 함수들 ---
   const handleAddCustomTask = () => {
     if(!newTaskInput.title.trim()) return;
     const newTask = { id: `custom_${Date.now()}`, title: newTaskInput.title.trim(), desc: newTaskInput.desc.trim(), isCustom: true };
@@ -236,12 +244,11 @@ export default function App() {
   const saveDueDate = (dateStr) => { setDueDate(dateStr); setIsEditingDueDate(false); saveStateToCloud({ dueDate: dateStr }); };
   
   const handleAddDiary = async (e) => {
-    e.preventDefault(); if (!user || !newDiaryText.trim()) return;
+    e.preventDefault(); if (!user || user.isAnonymous || !newDiaryText.trim()) return;
     await addDoc(collection(db, 'artifacts', environmentAppId, 'users', user.uid, 'diary_entries'), { text: newDiaryText.trim(), createdAt: Date.now(), authorId: user.uid, authorName: user.displayName || '부모님' });
     setNewDiaryText('');
   };
 
-  // --- 건강 수첩 & 진통 타이머 핸들러 ---
   const addWeight = (e) => {
     e.preventDefault(); if(!newWeight || isNaN(newWeight)) return;
     const newRecords = [...weightRecords, { id: Date.now(), weight: parseFloat(newWeight), date: Date.now() }];
@@ -320,17 +327,24 @@ export default function App() {
   };
 
   const Modal = ({ title, content, action, onClose }) => (
-    <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-      <div className="bg-white w-full max-w-sm rounded-[2rem] overflow-hidden shadow-2xl animate-in zoom-in-95">
+    <div className="fixed inset-0 z-[60] bg-slate-900/60 flex items-center justify-center p-6 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
         <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-          <h3 className="font-black text-slate-800">{title}</h3>
-          <button onClick={onClose} className="p-1 hover:bg-slate-200 rounded-full transition-colors"><X className="w-5 h-5 text-slate-500"/></button>
+          <h3 className="font-black text-slate-800 text-lg">{title}</h3>
+          <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-full transition-colors"><X className="w-5 h-5"/></button>
         </div>
-        <div className="p-6 max-h-[60vh] overflow-y-auto text-[15px] text-slate-600 leading-relaxed break-keep">{content}</div>
-        <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-2">
+        <div className="p-6 max-h-[60vh] overflow-y-auto text-[15px] text-slate-600 leading-relaxed break-keep">
+          {content}
+        </div>
+        <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-3">
           {action ? (
-            <><button onClick={onClose} className="flex-1 py-3 bg-slate-200 text-slate-700 font-bold rounded-xl">취소</button><button onClick={action} className="flex-1 py-3 bg-rose-500 text-white font-bold rounded-xl">확인</button></>
-          ) : <button onClick={onClose} className="w-full py-3 bg-slate-800 text-white font-bold rounded-xl">확인</button>}
+            <>
+              <button onClick={onClose} className="flex-1 py-3.5 bg-white border border-slate-200 text-slate-600 font-bold rounded-2xl active:scale-95 transition-transform">취소</button>
+              <button onClick={action} className="flex-1 py-3.5 bg-rose-500 text-white font-bold rounded-2xl shadow-sm shadow-rose-200 active:scale-95 transition-transform">확인</button>
+            </>
+          ) : (
+            <button onClick={onClose} className="w-full py-3.5 bg-slate-800 text-white font-bold rounded-2xl shadow-sm active:scale-95 transition-transform">확인</button>
+          )}
         </div>
       </div>
     </div>
@@ -343,49 +357,64 @@ export default function App() {
   const progressPercentage = Math.round((Object.values(completedTasks).filter(Boolean).length / checklistData.reduce((acc, cat) => acc + cat.tasks.length, 0)) * 100) || 0;
   const gearProgressPercentage = Math.round((Object.values(completedGear).filter(Boolean).length / gearData.reduce((acc, cat) => acc + cat.tasks.length, 0)) * 100) || 0;
 
-  if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-400">앱을 준비하는 중입니다...</div>;
+  // --- 화면 0: 인증 로딩 ---
+  if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-400 font-bold">앱을 준비하는 중입니다...</div>;
 
+  // --- 화면 1: 구글 로그인 (인증되지 않은 상태) ---
   if (!user || user.isAnonymous) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 font-sans">
-        <div className="w-full max-w-md bg-white rounded-[2.5rem] p-8 shadow-xl text-center border border-slate-100">
-          <Baby size={64} className="text-rose-500 mx-auto mb-4" />
-          <h1 className="text-3xl font-black text-slate-800 mb-2">ReadyBaby</h1>
+        {modalContent && <Modal title={modalContent.title} content={modalContent.text} action={modalContent.action} onClose={() => setModalContent(null)} />}
+        
+        <div className="w-full max-w-sm bg-white rounded-[2.5rem] p-8 shadow-2xl shadow-slate-200/50 text-center border border-slate-100">
+          <Baby className="w-16 h-16 text-rose-500 mx-auto mb-5 shrink-0" />
+          <h1 className="text-3xl font-black text-slate-800 mb-3 tracking-tight">ReadyBaby</h1>
           <p className="text-slate-500 text-[15px] mb-10 leading-relaxed break-keep">부부가 함께 구글 계정을 공유하며<br/>꼼꼼하게 채워나가는 출산 준비</p>
-          <button onClick={handleGoogleLogin} className="w-full py-4 bg-white border-2 border-slate-200 text-slate-700 rounded-2xl font-bold flex items-center justify-center gap-3 hover:bg-slate-50 hover:border-slate-300 transition-all shadow-sm">
-            <svg viewBox="0 0 24 24" width="24" height="24" className="w-6 h-6 shrink-0"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/><path d="M1 1h22v22H1z" fill="none"/></svg>
-            Google 계정으로 시작하기
+          
+          <button onClick={handleGoogleLogin} className="w-full py-4 px-6 bg-white border border-slate-200 text-slate-700 rounded-2xl font-bold flex items-center justify-center gap-3 hover:bg-slate-50 hover:border-slate-300 transition-all shadow-sm active:scale-95">
+            {/* 구글 로고 SVG 사이즈 고정 (폭발 방지) */}
+            <svg style={{ width: '24px', height: '24px', flexShrink: 0 }} viewBox="0 0 24 24">
+               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+               <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+               <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+               <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+               <path d="M1 1h22v22H1z" fill="none"/>
+            </svg>
+            <span className="text-[15px]">Google 계정으로 시작하기</span>
           </button>
         </div>
       </div>
     );
   }
 
+  // --- 화면 2: 메인 앱 ---
   return (
-    <div className="min-h-screen bg-slate-50 font-sans pb-32 break-keep relative">
-      {toastMsg && <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[70] bg-slate-800 text-white px-6 py-3 rounded-full shadow-2xl font-bold text-sm animate-in slide-in-from-top-4 fade-in">{toastMsg}</div>}
+    // pb-24 로 하단 네비게이션 바 공간 확보
+    <div className="min-h-screen bg-slate-50 font-sans pb-28 break-keep relative">
+      {toastMsg && <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[70] bg-slate-800/95 text-white px-6 py-3 rounded-full shadow-2xl font-bold text-sm animate-in slide-in-from-top-4 fade-in">{toastMsg}</div>}
       {modalContent && <Modal title={modalContent.title} content={modalContent.text} action={modalContent.action} onClose={() => setModalContent(null)} />}
 
+      {/* 진통 측정기 팝업 */}
       {isTimerOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/95 flex flex-col items-center justify-center p-6 animate-in fade-in">
-          <button onClick={() => setIsTimerOpen(false)} className="absolute top-6 right-6 p-2 text-slate-400 hover:text-white"><X className="w-8 h-8" /></button>
-          <h2 className="text-3xl font-black text-white mb-2">진통 측정기</h2>
-          <p className="text-slate-400 mb-10 text-center text-sm">초산은 진통 간격 5~10분,<br/>경산은 10~15분일 때 병원으로 가세요.</p>
-          <button onClick={handleTimerAction} className={`w-56 h-56 rounded-full flex flex-col items-center justify-center transition-all shadow-2xl ${currentContraction ? 'bg-rose-500 hover:bg-rose-600 animate-pulse scale-105' : 'bg-emerald-500 hover:bg-emerald-600'}`}>
+          <button onClick={() => setIsTimerOpen(false)} className="absolute top-6 right-6 p-2 text-slate-400 hover:text-white transition-colors"><X className="w-8 h-8" /></button>
+          <h2 className="text-3xl font-black text-white mb-3">진통 측정기</h2>
+          <p className="text-slate-400 mb-12 text-center text-sm leading-relaxed">초산은 진통 간격 5~10분,<br/>경산은 10~15분일 때 병원으로 가세요.</p>
+          <button onClick={handleTimerAction} className={`w-64 h-64 rounded-full flex flex-col items-center justify-center transition-all duration-300 shadow-2xl ${currentContraction ? 'bg-rose-500 hover:bg-rose-600 animate-pulse scale-105 shadow-rose-500/40' : 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/40'}`}>
             {currentContraction ? (
-              <><Square className="w-12 h-12 text-white mb-2" fill="currentColor"/><span className="text-white font-black text-2xl">진통 멈춤</span><span className="text-rose-100 font-mono text-xl mt-2">{formatTimer(now - currentContraction)}</span></>
+              <><Square className="w-12 h-12 text-white mb-2" fill="currentColor"/><span className="text-white font-black text-2xl">진통 멈춤</span><span className="text-rose-100 font-mono text-xl mt-2 font-bold">{formatTimer(now - currentContraction)}</span></>
             ) : <><Play className="w-12 h-12 text-white mb-2" fill="currentColor"/><span className="text-white font-black text-2xl">진통 시작</span></>}
           </button>
-          <div className="w-full max-w-md mt-12 bg-slate-800 rounded-3xl p-5 max-h-[30vh] overflow-y-auto no-scrollbar">
-            <div className="flex justify-between items-center mb-4"><span className="text-white font-bold">진통 기록</span>{contractions.length > 0 && <button onClick={clearContractions} className="text-xs text-slate-400 hover:text-red-400">초기화</button>}</div>
-            {contractions.length === 0 ? <p className="text-slate-500 text-center py-4 text-sm">아직 기록이 없습니다.</p> : (
+          <div className="w-full max-w-md mt-16 bg-slate-800 rounded-3xl p-6 max-h-[30vh] overflow-y-auto custom-scrollbar">
+            <div className="flex justify-between items-center mb-5"><span className="text-white font-bold">진통 기록</span>{contractions.length > 0 && <button onClick={clearContractions} className="text-xs text-slate-400 hover:text-red-400 font-bold bg-slate-700/50 px-3 py-1.5 rounded-lg">초기화</button>}</div>
+            {contractions.length === 0 ? <p className="text-slate-500 text-center py-6 text-sm">아직 기록이 없습니다.</p> : (
               <div className="space-y-3">
                 {contractions.map((c, i) => {
                   const prevC = contractions[i+1]; const interval = prevC ? formatTimer(c.start - prevC.start) : '-';
                   return (
-                    <div key={i} className="flex justify-between items-center bg-slate-700 p-3 rounded-xl">
-                      <div className="flex flex-col"><span className="text-slate-300 text-xs">{new Date(c.start).toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'})}</span><span className="text-white font-bold mt-0.5">간격: {interval}</span></div>
-                      <span className="text-rose-400 font-mono font-bold bg-slate-800 px-3 py-1.5 rounded-lg">진통 {formatTimer(c.duration)}</span>
+                    <div key={i} className="flex justify-between items-center bg-slate-700/50 p-4 rounded-2xl">
+                      <div className="flex flex-col"><span className="text-slate-400 text-xs font-medium">{new Date(c.start).toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'})}</span><span className="text-white font-bold mt-1 text-sm">간격: {interval}</span></div>
+                      <span className="text-rose-400 font-mono font-bold bg-slate-800 px-4 py-2 rounded-xl">진통 {formatTimer(c.duration)}</span>
                     </div>
                   );
                 })}
@@ -395,70 +424,63 @@ export default function App() {
         </div>
       )}
 
-      <div className="bg-white sticky top-0 z-20 shadow-md rounded-b-[2rem] px-4 sm:px-6 py-4 sm:py-5">
-        <div className="max-w-2xl mx-auto">
-          <div className="flex justify-between items-center bg-slate-50 px-4 py-2.5 rounded-xl border border-slate-100 mb-4">
+      {/* 상단 미니멀 헤더 */}
+      <div className="bg-white sticky top-0 z-30 shadow-sm border-b border-slate-100 px-5 py-4">
+        <div className="max-w-md mx-auto flex justify-between items-center">
+          <div className="flex flex-col">
+            <div className="flex items-center gap-2 mb-1.5">
+              <Baby className="w-6 h-6 text-rose-500 shrink-0" />
+              <h1 className="text-xl font-black text-slate-800 tracking-tight">ReadyBaby</h1>
+            </div>
             <div className="flex items-center gap-2">
-              {user.photoURL ? <img src={user.photoURL} className="w-5 h-5 rounded-full"/> : <span className="text-sm">👤</span>}
-              <span className="text-[13px] font-bold text-slate-700 truncate">{user.displayName || '가족'} 님의 기록장</span>
-            </div>
-            <button onClick={handleLogout} className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 font-bold bg-white px-2.5 py-1.5 rounded-lg shadow-sm border border-slate-200 transition-colors"><LogOut className="w-3.5 h-3.5" /> 로그아웃</button>
-          </div>
-          <div className="flex justify-between items-center mb-4">
-            <div className="flex flex-col min-w-0 pr-2">
-              <h1 className="text-xl sm:text-2xl font-black text-slate-800 flex items-center gap-1.5 truncate"><Baby className="w-6 h-6 sm:w-8 sm:h-8 text-rose-500 shrink-0" /> ReadyBaby</h1>
-              <div className="flex flex-wrap items-center gap-2 mt-2">
-                <div className="inline-flex items-center gap-1.5 bg-rose-50 px-3 py-1.5 rounded-xl border border-rose-100 shrink-0">
-                  <CalendarDays className="w-4 h-4 text-rose-500" />
-                  {isEditingDueDate ? (
-                    <input type="date" value={dueDate} onChange={(e) => saveDueDate(e.target.value)} onBlur={() => setIsEditingDueDate(false)} autoFocus className="bg-transparent text-sm font-bold text-rose-600 outline-none w-28"/>
-                  ) : <span onClick={() => setIsEditingDueDate(true)} className="text-sm font-bold text-rose-600 cursor-pointer hover:opacity-70">{pregInfo.text}</span>}
-                </div>
-                {dueDate && pregInfo.fruit && <span className="inline-flex items-center gap-1 bg-amber-50 px-2.5 py-1.5 rounded-xl border border-amber-100 text-[13px] font-bold text-amber-700 animate-in fade-in zoom-in shrink-0">{pregInfo.icon} {pregInfo.fruit}</span>}
-              </div>
-            </div>
-            <div className="flex gap-2 shrink-0">
-              <button onClick={() => setIsTimerOpen(true)} className="flex flex-col items-center justify-center w-12 h-12 sm:w-14 sm:h-14 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-colors group">
-                <Timer className="w-5 h-5 sm:w-6 sm:h-6 text-rose-500 group-hover:scale-110 transition-transform" /><span className="text-[10px] font-black text-rose-600 mt-0.5">진통</span>
-              </button>
+               {isEditingDueDate ? (
+                  <input type="date" value={dueDate} onChange={(e) => saveDueDate(e.target.value)} onBlur={() => setIsEditingDueDate(false)} autoFocus className="bg-rose-50 px-2 py-1 rounded-lg text-xs font-bold text-rose-600 outline-none w-28 border border-rose-100"/>
+                ) : (
+                  <span onClick={() => setIsEditingDueDate(true)} className="inline-flex items-center gap-1 bg-rose-50 border border-rose-100 px-2 py-1.5 rounded-lg text-[11px] font-bold text-rose-600 cursor-pointer">
+                     <CalendarDays className="w-3.5 h-3.5" /> {pregInfo.text}
+                  </span>
+               )}
+               {dueDate && pregInfo.fruit && <span className="inline-flex items-center gap-1 bg-amber-50 border border-amber-100 px-2 py-1.5 rounded-lg text-[11px] font-bold text-amber-700">{pregInfo.icon} {pregInfo.fruit}</span>}
             </div>
           </div>
-          <div className="flex overflow-x-auto gap-2 no-scrollbar pb-1 -mx-2 px-2 sm:mx-0 sm:px-0">
-            {[ { id: 'checklist', label: '임신 체크', icon: <ListTodo className="w-4 h-4" /> }, { id: 'baby_gear', label: '출산/육아템', icon: <ShoppingBag className="w-4 h-4" /> }, { id: 'health', label: '건강 수첩', icon: <Activity className="w-4 h-4" /> }, { id: 'diary', label: '임신 일기', icon: <BookHeart className="w-4 h-4" /> }, { id: 'info', label: '정보/설정', icon: <Info className="w-4 h-4" /> }].map(tab => (
-              <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex-none px-4 py-2.5 rounded-full text-[13px] sm:text-sm font-bold flex items-center gap-1.5 transition-all whitespace-nowrap ${activeTab === tab.id ? 'bg-slate-800 text-white shadow-md scale-[1.02]' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{tab.icon} {tab.label}</button>
-            ))}
-          </div>
+          <button onClick={() => setIsTimerOpen(true)} className="flex flex-col items-center justify-center w-12 h-12 bg-rose-50 hover:bg-rose-100 border border-rose-100 rounded-2xl transition-colors active:scale-95 shrink-0">
+            <Timer className="w-5 h-5 text-rose-500" /><span className="text-[9px] font-black text-rose-600 mt-0.5">진통</span>
+          </button>
         </div>
       </div>
 
-      <div className="max-w-2xl mx-auto px-4 mt-6">
+      {/* 메인 컨텐츠 영역 */}
+      <div className="max-w-md mx-auto px-4 mt-6">
+        
+        {/* === 체크리스트 === */}
         {activeTab === 'checklist' && (
-          <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="bg-gradient-to-br from-rose-500 to-purple-500 p-6 rounded-[2rem] text-white shadow-lg">
-              <div className="flex justify-between items-end mb-3"><span className="text-sm font-medium opacity-90">산전 준비 완료도</span><span className="text-3xl font-black">{progressPercentage}%</span></div>
-              <div className="bg-white/20 rounded-full h-3 overflow-hidden"><div className="bg-white h-full transition-all duration-1000" style={{ width: `${progressPercentage}%` }}></div></div>
+          <div className="space-y-4 animate-in fade-in duration-300">
+            <div className="bg-gradient-to-br from-rose-500 to-purple-600 p-6 rounded-3xl text-white shadow-lg shadow-rose-200">
+              <div className="flex justify-between items-end mb-3"><span className="text-sm font-medium opacity-90">산전 준비 완료도</span><span className="text-4xl font-black tracking-tighter">{progressPercentage}%</span></div>
+              <div className="bg-white/20 rounded-full h-2.5 overflow-hidden"><div className="bg-white h-full transition-all duration-1000 ease-out" style={{ width: `${progressPercentage}%` }}></div></div>
             </div>
+
             {checklistData.map((category) => (
               <div key={category.id} className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
-                <div className={`p-4 sm:p-5 flex items-center justify-between cursor-pointer ${category.color}`} onClick={() => setExpandedCategories(prev => ({...prev, [category.id]: !prev[category.id]}))}>
-                  <div className="flex items-center gap-3"><div className="bg-white/90 p-2.5 rounded-2xl shrink-0 shadow-sm">{category.icon}</div><h2 className="font-bold text-[1.05rem] sm:text-lg pr-2 break-keep">{category.title}</h2></div>
-                  <ChevronDown className={`w-5 h-5 shrink-0 opacity-70 transition-transform ${expandedCategories[category.id] ? 'rotate-180' : ''}`}/>
+                <div className={`p-4 flex items-center justify-between cursor-pointer transition-colors active:bg-slate-50 ${category.color}`} onClick={() => setExpandedCategories(prev => ({...prev, [category.id]: !prev[category.id]}))}>
+                  <div className="flex items-center gap-3"><div className="bg-white/90 p-2.5 rounded-2xl shrink-0 shadow-sm">{category.icon}</div><h2 className="font-bold text-[1.05rem] pr-2 break-keep tracking-tight">{category.title}</h2></div>
+                  <ChevronDown className={`w-5 h-5 shrink-0 opacity-70 transition-transform duration-300 ${expandedCategories[category.id] ? 'rotate-180' : ''}`}/>
                 </div>
                 {expandedCategories[category.id] && (
-                  <div className="p-3 sm:p-4 space-y-3">
+                  <div className="p-3 space-y-2">
                     {category.tasks.map((task) => {
                       const isChecked = completedTasks[task.id];
                       return (
-                        <div key={task.id} className={`p-4 rounded-2xl border transition-all relative ${isChecked ? 'bg-slate-50 border-transparent opacity-70' : 'border-slate-100'}`}>
-                          {task.isCustom && <button onClick={(e) => { e.stopPropagation(); handleDeleteCustomTask('checklist', category.id, task.id); }} className="absolute top-2 right-2 p-1.5 text-slate-300 hover:text-red-400 rounded-full hover:bg-slate-100 transition-colors"><X className="w-4 h-4" /></button>}
-                          <div className="flex gap-3 sm:gap-4 items-start">
-                            <button onClick={() => toggleTask(task.id)} className="mt-0.5 shrink-0"><CheckCircle2 className={`w-6 h-6 sm:w-7 sm:h-7 ${isChecked ? 'text-emerald-500 drop-shadow-sm' : 'text-slate-200'}`} /></button>
+                        <div key={task.id} className={`p-4 rounded-2xl border transition-all relative ${isChecked ? 'bg-slate-50 border-transparent opacity-60' : 'border-slate-100'}`}>
+                          {task.isCustom && <button onClick={(e) => { e.stopPropagation(); handleDeleteCustomTask('checklist', category.id, task.id); }} className="absolute top-3 right-3 p-1.5 text-slate-300 hover:text-red-400 bg-white rounded-full border border-slate-100 shadow-sm transition-colors"><X className="w-3.5 h-3.5" /></button>}
+                          <div className="flex gap-3.5 items-start">
+                            <button onClick={() => toggleTask(task.id)} className="mt-0.5 shrink-0 active:scale-90 transition-transform"><CheckCircle2 className={`w-7 h-7 ${isChecked ? 'text-emerald-500 drop-shadow-sm' : 'text-slate-200'}`} /></button>
                             <div className="flex-1 pr-4">
-                              <h3 className={`font-bold text-[15px] sm:text-base break-keep ${isChecked ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{task.title} {task.isCustom && <span className="ml-2 text-[10px] bg-rose-100 text-rose-600 px-1.5 py-0.5 rounded-full align-middle font-medium">직접 추가</span>}</h3>
-                              {task.desc && <p className="text-[13px] sm:text-xs text-slate-500 mt-1.5 break-keep">{task.desc}</p>}
-                               <div className="mt-3.5 flex items-center gap-2.5 bg-white rounded-xl p-2.5 border border-slate-200 focus-within:border-rose-300 focus-within:ring-2 focus-within:ring-rose-50 transition-all shadow-sm">
+                              <h3 className={`font-bold text-[15px] break-keep leading-tight ${isChecked ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{task.title} {task.isCustom && <span className="ml-1.5 text-[9px] bg-rose-100 text-rose-600 px-1.5 py-0.5 rounded-md align-middle font-black">직접 추가</span>}</h3>
+                              {task.desc && <p className="text-[13px] text-slate-500 mt-1.5 break-keep leading-snug">{task.desc}</p>}
+                               <div className="mt-3 flex items-center gap-2 bg-white rounded-xl p-2.5 border border-slate-200 focus-within:border-rose-300 focus-within:ring-2 focus-within:ring-rose-50 transition-all shadow-sm">
                                 <MessageSquareText className="w-4 h-4 text-slate-300 shrink-0" />
-                                <input type="text" defaultValue={taskNotes[task.id] || ''} onBlur={(e) => handleNoteBlur(task.id, e.target.value)} placeholder="메모를 남겨보세요." className="w-full text-sm sm:text-xs text-slate-600 focus:outline-none placeholder:text-slate-300 bg-transparent truncate"/>
+                                <input type="text" defaultValue={taskNotes[task.id] || ''} onBlur={(e) => handleNoteBlur(task.id, e.target.value)} placeholder="메모를 남겨보세요." className="w-full text-sm text-slate-600 focus:outline-none placeholder:text-slate-300 bg-transparent truncate"/>
                               </div>
                             </div>
                           </div>
@@ -467,10 +489,10 @@ export default function App() {
                     })}
                     {newTaskInput.categoryId === category.id && newTaskInput.type === 'checklist' ? (
                       <div className="p-4 bg-rose-50 rounded-2xl border border-rose-200 animate-in fade-in zoom-in-95 duration-200">
-                        <input type="text" placeholder="할 일 제목" value={newTaskInput.title} onChange={(e) => setNewTaskInput({...newTaskInput, title: e.target.value})} className="w-full mb-2 p-2.5 rounded-xl border-none focus:ring-2 focus:ring-rose-300 text-sm font-bold text-slate-700" autoFocus/>
-                        <div className="flex gap-2 justify-end mt-2"><button onClick={() => setNewTaskInput({categoryId: null, title: '', desc: '', type: 'checklist'})} className="px-3 py-1.5 text-xs font-bold text-slate-500 hover:bg-rose-100 rounded-lg transition-colors">취소</button><button onClick={handleAddCustomTask} disabled={!newTaskInput.title.trim()} className="px-3 py-1.5 text-xs font-bold bg-rose-500 text-white rounded-lg hover:bg-rose-600 disabled:opacity-50 transition-colors">저장</button></div>
+                        <input type="text" placeholder="할 일 제목" value={newTaskInput.title} onChange={(e) => setNewTaskInput({...newTaskInput, title: e.target.value})} className="w-full mb-2 p-3 rounded-xl border-none focus:ring-2 focus:ring-rose-300 text-sm font-bold text-slate-700 shadow-sm" autoFocus/>
+                        <div className="flex gap-2 justify-end mt-3"><button onClick={() => setNewTaskInput({categoryId: null, title: '', desc: '', type: 'checklist'})} className="px-4 py-2 text-xs font-bold text-slate-500 bg-white border border-slate-200 rounded-xl transition-colors">취소</button><button onClick={handleAddCustomTask} disabled={!newTaskInput.title.trim()} className="px-4 py-2 text-xs font-bold bg-rose-500 text-white rounded-xl hover:bg-rose-600 disabled:opacity-50 transition-colors shadow-sm">저장</button></div>
                       </div>
-                    ) : <button onClick={() => setNewTaskInput({categoryId: category.id, title: '', desc: '', type: 'checklist'})} className="w-full py-3.5 flex items-center justify-center gap-2 text-sm font-bold text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-2xl border-2 border-dashed border-slate-200 hover:border-rose-200 transition-all"><Plus className="w-4 h-4" /> 항목 추가</button>}
+                    ) : <button onClick={() => setNewTaskInput({categoryId: category.id, title: '', desc: '', type: 'checklist'})} className="w-full py-4 flex items-center justify-center gap-2 text-sm font-bold text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-2xl border-2 border-dashed border-slate-200 hover:border-rose-200 transition-all active:scale-[0.98]"><Plus className="w-4 h-4" /> 내 항목 추가하기</button>}
                   </div>
                 )}
               </div>
@@ -480,32 +502,32 @@ export default function App() {
 
         {/* === 육아템 === */}
         {activeTab === 'baby_gear' && (
-           <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
-             <div className="bg-gradient-to-br from-emerald-500 to-teal-600 p-6 rounded-[2rem] text-white shadow-lg">
-              <div className="flex justify-between items-end mb-3"><span className="text-sm font-medium opacity-90">필수 육아/산모템 구비율</span><span className="text-3xl font-black">{gearProgressPercentage}%</span></div>
-              <div className="bg-white/20 rounded-full h-3 overflow-hidden"><div className="bg-white h-full transition-all duration-1000" style={{ width: `${gearProgressPercentage}%` }}></div></div>
+           <div className="space-y-4 animate-in fade-in duration-300">
+             <div className="bg-gradient-to-br from-emerald-500 to-teal-600 p-6 rounded-3xl text-white shadow-lg shadow-emerald-200">
+              <div className="flex justify-between items-end mb-3"><span className="text-sm font-medium opacity-90">필수 육아/산모템 구비율</span><span className="text-4xl font-black tracking-tighter">{gearProgressPercentage}%</span></div>
+              <div className="bg-white/20 rounded-full h-2.5 overflow-hidden"><div className="bg-white h-full transition-all duration-1000 ease-out" style={{ width: `${gearProgressPercentage}%` }}></div></div>
             </div>
              {gearData.map((category) => (
               <div key={category.id} className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
-                <div className={`p-4 sm:p-5 flex items-center justify-between cursor-pointer ${category.color}`} onClick={() => setExpandedGearCats(prev => ({...prev, [category.id]: !prev[category.id]}))}>
-                  <div className="flex items-center gap-3"><div className="bg-white/90 p-2.5 rounded-2xl shrink-0 shadow-sm">{category.icon}</div><h2 className="font-bold text-[1.05rem] sm:text-lg pr-2 break-keep">{category.title}</h2></div>
-                  <ChevronDown className={`w-5 h-5 shrink-0 opacity-70 transition-transform ${expandedGearCats[category.id] ? 'rotate-180' : ''}`}/>
+                <div className={`p-4 flex items-center justify-between cursor-pointer transition-colors active:bg-slate-50 ${category.color}`} onClick={() => setExpandedGearCats(prev => ({...prev, [category.id]: !prev[category.id]}))}>
+                  <div className="flex items-center gap-3"><div className="bg-white/90 p-2.5 rounded-2xl shrink-0 shadow-sm">{category.icon}</div><h2 className="font-bold text-[1.05rem] pr-2 break-keep tracking-tight">{category.title}</h2></div>
+                  <ChevronDown className={`w-5 h-5 shrink-0 opacity-70 transition-transform duration-300 ${expandedGearCats[category.id] ? 'rotate-180' : ''}`}/>
                 </div>
                 {expandedGearCats[category.id] && (
-                  <div className="p-3 sm:p-4 space-y-3">
+                  <div className="p-3 space-y-2">
                     {category.tasks.map((task) => {
                       const isChecked = completedGear[task.id];
                       return (
-                      <div key={task.id} className={`p-4 rounded-2xl border transition-all relative ${isChecked ? 'bg-slate-50 border-transparent opacity-70' : 'border-slate-100'}`}>
-                         {task.isCustom && <button onClick={(e) => { e.stopPropagation(); handleDeleteCustomTask('gear', category.id, task.id); }} className="absolute top-2 right-2 p-1.5 text-slate-300 hover:text-red-400 rounded-full hover:bg-slate-100 transition-colors"><X className="w-4 h-4" /></button>}
-                         <div className="flex gap-3 sm:gap-4 items-start">
-                           <button onClick={() => toggleGear(task.id)} className="mt-0.5 shrink-0"><CheckCircle2 className={`w-6 h-6 sm:w-7 sm:h-7 ${isChecked ? 'text-emerald-500 drop-shadow-sm' : 'text-slate-200'}`} /></button>
+                      <div key={task.id} className={`p-4 rounded-2xl border transition-all relative ${isChecked ? 'bg-slate-50 border-transparent opacity-60' : 'border-slate-100'}`}>
+                         {task.isCustom && <button onClick={(e) => { e.stopPropagation(); handleDeleteCustomTask('gear', category.id, task.id); }} className="absolute top-3 right-3 p-1.5 text-slate-300 hover:text-red-400 bg-white rounded-full border border-slate-100 shadow-sm transition-colors"><X className="w-3.5 h-3.5" /></button>}
+                         <div className="flex gap-3.5 items-start">
+                           <button onClick={() => toggleGear(task.id)} className="mt-0.5 shrink-0 active:scale-90 transition-transform"><CheckCircle2 className={`w-7 h-7 ${isChecked ? 'text-emerald-500 drop-shadow-sm' : 'text-slate-200'}`} /></button>
                            <div className="flex-1 pr-4">
-                              <h3 className={`font-bold text-[15px] sm:text-base break-keep ${isChecked ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{task.title} {task.isCustom && <span className="ml-2 text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full align-middle font-medium">직접 추가</span>}</h3>
-                              {task.desc && <p className="text-[13px] sm:text-xs text-slate-500 mt-1.5 break-keep">{task.desc}</p>}
-                              <div className="mt-3.5 flex items-center gap-2.5 bg-white rounded-xl p-2.5 border border-slate-200 focus-within:border-emerald-300 focus-within:ring-2 focus-within:ring-emerald-50 transition-all shadow-sm">
+                              <h3 className={`font-bold text-[15px] break-keep leading-tight ${isChecked ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{task.title} {task.isCustom && <span className="ml-1.5 text-[9px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-md align-middle font-black">직접 추가</span>}</h3>
+                              {task.desc && <p className="text-[13px] text-slate-500 mt-1.5 break-keep leading-snug">{task.desc}</p>}
+                              <div className="mt-3 flex items-center gap-2 bg-white rounded-xl p-2.5 border border-slate-200 focus-within:border-emerald-300 focus-within:ring-2 focus-within:ring-emerald-50 transition-all shadow-sm">
                                   <MessageSquareText className="w-4 h-4 text-slate-300 shrink-0" />
-                                  <input type="text" defaultValue={gearNotes[task.id] || ''} onBlur={(e) => handleGearNoteBlur(task.id, e.target.value)} placeholder="브랜드명, 당근 구매 등 메모" className="w-full text-sm sm:text-xs text-slate-600 focus:outline-none placeholder:text-slate-300 bg-transparent truncate"/>
+                                  <input type="text" defaultValue={gearNotes[task.id] || ''} onBlur={(e) => handleGearNoteBlur(task.id, e.target.value)} placeholder="브랜드명, 당근 구매 등 메모" className="w-full text-sm text-slate-600 focus:outline-none placeholder:text-slate-300 bg-transparent truncate"/>
                               </div>
                            </div>
                          </div>
@@ -513,10 +535,10 @@ export default function App() {
                     )})}
                      {newTaskInput.categoryId === category.id && newTaskInput.type === 'gear' ? (
                       <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 animate-in fade-in zoom-in-95 duration-200">
-                        <input type="text" placeholder="용품명" value={newTaskInput.title} onChange={(e) => setNewTaskInput({...newTaskInput, title: e.target.value})} className="w-full mb-2 p-2.5 rounded-xl border-none focus:ring-2 focus:ring-emerald-300 text-sm font-bold text-slate-700" autoFocus/>
-                        <div className="flex gap-2 justify-end mt-2"><button onClick={() => setNewTaskInput({categoryId: null, title: '', desc: '', type: 'gear'})} className="px-3 py-1.5 text-xs font-bold text-slate-500 hover:bg-emerald-100 rounded-lg transition-colors">취소</button><button onClick={handleAddCustomTask} disabled={!newTaskInput.title.trim()} className="px-3 py-1.5 text-xs font-bold bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 disabled:opacity-50 transition-colors">저장</button></div>
+                        <input type="text" placeholder="용품명" value={newTaskInput.title} onChange={(e) => setNewTaskInput({...newTaskInput, title: e.target.value})} className="w-full mb-2 p-3 rounded-xl border-none focus:ring-2 focus:ring-emerald-300 text-sm font-bold text-slate-700 shadow-sm" autoFocus/>
+                        <div className="flex gap-2 justify-end mt-3"><button onClick={() => setNewTaskInput({categoryId: null, title: '', desc: '', type: 'gear'})} className="px-4 py-2 text-xs font-bold text-slate-500 bg-white border border-slate-200 rounded-xl transition-colors">취소</button><button onClick={handleAddCustomTask} disabled={!newTaskInput.title.trim()} className="px-4 py-2 text-xs font-bold bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 disabled:opacity-50 transition-colors shadow-sm">저장</button></div>
                       </div>
-                    ) : <button onClick={() => setNewTaskInput({categoryId: category.id, title: '', desc: '', type: 'gear'})} className="w-full py-3.5 flex items-center justify-center gap-2 text-sm font-bold text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 rounded-2xl border-2 border-dashed border-slate-200 hover:border-emerald-200 transition-all"><Plus className="w-4 h-4" /> 항목 추가</button>}
+                    ) : <button onClick={() => setNewTaskInput({categoryId: category.id, title: '', desc: '', type: 'gear'})} className="w-full py-4 flex items-center justify-center gap-2 text-sm font-bold text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 rounded-2xl border-2 border-dashed border-slate-200 hover:border-emerald-200 transition-all active:scale-[0.98]"><Plus className="w-4 h-4" /> 내 항목 추가하기</button>}
                   </div>
                 )}
               </div>
@@ -526,43 +548,44 @@ export default function App() {
 
         {/* === 건강 수첩 === */}
         {activeTab === 'health' && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <section className="bg-white p-5 sm:p-6 rounded-3xl shadow-sm border border-slate-100">
-              <div className="flex items-center gap-2 mb-4"><div className="bg-purple-100 p-2 rounded-xl"><Scale className="w-5 h-5 text-purple-600" /></div><h2 className="text-lg font-black text-slate-800">산모 체중 기록</h2></div>
-              <form onSubmit={addWeight} className="flex gap-2 mb-4">
-                <input type="number" step="0.1" placeholder="현재 체중 (kg)" value={newWeight} onChange={(e)=>setNewWeight(e.target.value)} className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm sm:text-base focus:ring-2 focus:ring-purple-200 outline-none" />
-                <button type="submit" className="bg-purple-500 text-white font-bold px-4 rounded-xl hover:bg-purple-600 shrink-0">기록</button>
+          <div className="space-y-4 animate-in fade-in duration-300">
+            <section className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+              <div className="flex items-center gap-2.5 mb-5"><div className="bg-purple-100 p-2.5 rounded-2xl"><Scale className="w-5 h-5 text-purple-600" /></div><h2 className="text-lg font-black text-slate-800 tracking-tight">산모 체중 기록</h2></div>
+              <form onSubmit={addWeight} className="flex gap-2 mb-5">
+                <input type="number" step="0.1" placeholder="현재 체중 (kg)" value={newWeight} onChange={(e)=>setNewWeight(e.target.value)} className="flex-1 bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-[15px] focus:ring-2 focus:ring-purple-200 outline-none" />
+                <button type="submit" className="bg-purple-500 text-white font-bold px-5 rounded-2xl hover:bg-purple-600 shrink-0 shadow-sm active:scale-95 transition-transform">기록</button>
               </form>
-              <div className="space-y-2 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
-                {weightRecords.length === 0 && <p className="text-center text-slate-400 text-sm py-4">첫 체중을 기록해보세요.</p>}
+              <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
+                {weightRecords.length === 0 && <p className="text-center text-slate-400 text-sm py-6 bg-slate-50 rounded-2xl border border-dashed border-slate-200">첫 체중을 기록해보세요.</p>}
                 {[...weightRecords].sort((a,b)=>b.date-a.date).map((rec, i, arr) => {
                   const initialWeight = arr[arr.length-1].weight;
                   const diff = (rec.weight - initialWeight).toFixed(1);
                   return (
-                    <div key={rec.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100">
-                      <div className="flex items-center gap-3"><span className="text-[13px] sm:text-sm text-slate-400">{new Date(rec.date).toLocaleDateString('ko-KR', {month:'short', day:'numeric'})}</span><span className="font-bold text-slate-700 text-sm sm:text-base">{rec.weight} kg</span></div>
-                      <div className="flex items-center gap-2 sm:gap-3">
-                        {i !== arr.length - 1 && <span className={`text-[11px] sm:text-xs font-bold px-2 py-1 rounded-lg ${diff > 0 ? 'bg-rose-100 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}>{diff > 0 ? '+' : ''}{diff}kg</span>}
-                        <button onClick={() => deleteWeight(rec.id)} className="text-slate-300 hover:text-red-400 p-1"><X className="w-4 h-4 sm:w-5 sm:h-5"/></button>
+                    <div key={rec.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                      <div className="flex items-center gap-3"><span className="text-[13px] text-slate-400 font-medium">{new Date(rec.date).toLocaleDateString('ko-KR', {month:'short', day:'numeric'})}</span><span className="font-bold text-slate-700 text-[15px]">{rec.weight} kg</span></div>
+                      <div className="flex items-center gap-3">
+                        {i !== arr.length - 1 && <span className={`text-[11px] font-black px-2 py-1 rounded-lg ${diff > 0 ? 'bg-rose-100 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}>{diff > 0 ? '+' : ''}{diff}kg</span>}
+                        <button onClick={() => deleteWeight(rec.id)} className="text-slate-300 hover:text-red-400 p-1 bg-white rounded-full shadow-sm"><X className="w-4 h-4"/></button>
                       </div>
                     </div>
                   )
                 })}
               </div>
             </section>
-            <section className="bg-white p-5 sm:p-6 rounded-3xl shadow-sm border border-slate-100">
-              <div className="flex items-center gap-2 mb-3"><div className="bg-blue-100 p-2 rounded-xl"><ClipboardList className="w-5 h-5 text-blue-600" /></div><h2 className="text-lg font-black text-slate-800">병원 진료 Q&A 리스트</h2></div>
-              <form onSubmit={addQuestion} className="flex gap-2 mb-4">
-                <input type="text" placeholder="질문 입력" value={newQuestion} onChange={(e)=>setNewQuestion(e.target.value)} className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm sm:text-base focus:ring-2 focus:ring-blue-200 outline-none" />
-                <button type="submit" disabled={!newQuestion.trim()} className="bg-blue-500 disabled:bg-slate-300 text-white font-bold px-4 rounded-xl hover:bg-blue-600 shrink-0 transition-colors"><Plus className="w-5 h-5"/></button>
+            <section className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+              <div className="flex items-center gap-2.5 mb-3"><div className="bg-blue-100 p-2.5 rounded-2xl"><ClipboardList className="w-5 h-5 text-blue-600" /></div><h2 className="text-lg font-black text-slate-800 tracking-tight">진료 Q&A 리스트</h2></div>
+              <p className="text-[13px] text-slate-500 mb-5 break-keep">초음파 보러 가서 원장님께 여쭤볼 내용을 미리 적어두세요!</p>
+              <form onSubmit={addQuestion} className="flex gap-2 mb-5">
+                <input type="text" placeholder="질문 입력" value={newQuestion} onChange={(e)=>setNewQuestion(e.target.value)} className="flex-1 bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-[15px] focus:ring-2 focus:ring-blue-200 outline-none" />
+                <button type="submit" disabled={!newQuestion.trim()} className="bg-blue-500 disabled:bg-slate-300 text-white font-bold px-5 rounded-2xl hover:bg-blue-600 shrink-0 transition-colors shadow-sm active:scale-95"><Plus className="w-5 h-5"/></button>
               </form>
-              <div className="space-y-2">
-                {hospitalQuestions.length === 0 && <p className="text-center text-slate-400 text-sm py-4">등록된 질문이 없습니다.</p>}
+              <div className="space-y-2.5">
+                {hospitalQuestions.length === 0 && <p className="text-center text-slate-400 text-sm py-6 bg-slate-50 rounded-2xl border border-dashed border-slate-200">등록된 질문이 없습니다.</p>}
                 {hospitalQuestions.map(q => (
-                  <div key={q.id} className="flex gap-3 items-start p-3 sm:p-4 bg-slate-50 border border-slate-100 rounded-xl group">
-                    <button onClick={() => toggleQuestion(q.id)} className="mt-0.5 shrink-0"><CheckCircle2 className={`w-5 h-5 sm:w-6 sm:h-6 ${q.isDone ? 'text-blue-500 drop-shadow-sm' : 'text-slate-300'}`}/></button>
-                    <span className={`flex-1 text-[14px] sm:text-[15px] break-keep leading-relaxed ${q.isDone ? 'text-slate-400 line-through' : 'text-slate-700 font-medium'}`}>{q.text}</span>
-                    <button onClick={() => deleteQuestion(q.id)} className="text-slate-300 hover:text-red-400 sm:opacity-0 group-hover:opacity-100 p-1 transition-opacity"><X className="w-4 h-4 sm:w-5 sm:h-5"/></button>
+                  <div key={q.id} className="flex gap-3 items-start p-4 bg-slate-50 border border-slate-100 rounded-2xl">
+                    <button onClick={() => toggleQuestion(q.id)} className="mt-0.5 shrink-0 active:scale-90 transition-transform"><CheckCircle2 className={`w-6 h-6 ${q.isDone ? 'text-blue-500 drop-shadow-sm' : 'text-slate-300'}`}/></button>
+                    <span className={`flex-1 text-[15px] break-keep leading-relaxed pt-0.5 ${q.isDone ? 'text-slate-400 line-through' : 'text-slate-700 font-medium'}`}>{q.text}</span>
+                    <button onClick={() => deleteQuestion(q.id)} className="text-slate-300 hover:text-red-400 p-1 bg-white rounded-full shadow-sm"><X className="w-4 h-4"/></button>
                   </div>
                 ))}
               </div>
@@ -572,63 +595,101 @@ export default function App() {
 
         {/* === 임신 일기 === */}
         {activeTab === 'diary' && (
-          <div className="space-y-5 sm:space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <form onSubmit={handleAddDiary} className="bg-white p-5 sm:p-6 rounded-3xl shadow-sm border border-slate-100">
-              <textarea rows="4" value={newDiaryText} onChange={(e) => setNewDiaryText(e.target.value)} placeholder="오늘 하루 우리 아기는 어땠나요?" className="w-full bg-slate-50 border-none rounded-2xl p-4 text-slate-700 focus:ring-2 focus:ring-slate-200 resize-none text-[15px] leading-relaxed" />
-              <button disabled={!newDiaryText.trim()} className="w-full mt-3 bg-slate-800 text-white font-bold py-3.5 rounded-2xl hover:bg-slate-700 disabled:bg-slate-200 transition-all">일기 저장</button>
+          <div className="space-y-4 animate-in fade-in duration-300">
+            <form onSubmit={handleAddDiary} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+              <textarea rows="4" value={newDiaryText} onChange={(e) => setNewDiaryText(e.target.value)} placeholder="오늘 하루 우리 아기는 어땠나요?" className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-slate-700 focus:ring-2 focus:ring-slate-200 resize-none text-[15px] leading-relaxed outline-none" />
+              <button disabled={!newDiaryText.trim()} className="w-full mt-3 bg-slate-800 text-white font-bold py-4 rounded-2xl hover:bg-slate-700 disabled:bg-slate-200 transition-all shadow-sm active:scale-[0.98]">일기 저장</button>
             </form>
             <div className="space-y-4">
+              {diaryEntries.length === 0 && <p className="text-center text-slate-400 text-sm py-10 font-medium">첫 번째 이야기를 기록해보세요.</p>}
               {diaryEntries.map((entry) => (
                 <div key={entry.id} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 relative group">
-                  <div className="flex items-center gap-2 mb-4">
-                    <span className="text-sm font-black text-slate-500 bg-slate-100 px-3 py-1.5 rounded-lg">{new Date(entry.createdAt).toLocaleDateString('ko-KR')}</span>
-                    <span className="text-xs text-slate-400 font-medium bg-white border border-slate-200 px-2 py-1 rounded-lg">작성: {entry.authorName || '가족'}</span>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                       <span className="text-[13px] font-black text-slate-500 bg-slate-100 px-3 py-1.5 rounded-xl">{new Date(entry.createdAt).toLocaleDateString('ko-KR')}</span>
+                       <span className="text-[11px] text-slate-400 font-bold border border-slate-200 px-2 py-1 rounded-lg">작성: {entry.authorName || '가족'}</span>
+                    </div>
+                    <button onClick={() => {
+                        setModalContent({ title: '일기 삭제', text: <p>이 일기를 정말 삭제하시겠습니까?</p>, action: () => { deleteDoc(doc(db, 'artifacts', environmentAppId, 'users', user.uid, 'diary_entries', entry.id)); setModalContent(null); } });
+                    }} className="text-slate-300 hover:text-red-500 p-2 bg-slate-50 rounded-full active:scale-90 transition-transform"><Trash2 className="w-4 h-4" /></button>
                   </div>
-                  <button onClick={() => window.confirm('삭제할까요?') && deleteDoc(doc(db, 'artifacts', environmentAppId, 'users', user.uid, 'diary_entries', entry.id))} className="absolute top-5 right-5 text-slate-300 hover:text-red-500 sm:opacity-0 group-hover:opacity-100 p-2"><Trash2 className="w-4 h-4 sm:w-5 sm:h-5" /></button>
-                  <p className="text-[15px] sm:text-base text-slate-700 leading-loose whitespace-pre-wrap break-keep">{entry.text}</p>
+                  <p className="text-[15px] text-slate-700 leading-loose whitespace-pre-wrap break-keep">{entry.text}</p>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* === 정보/설정 및 법적/후원 탭 === */}
+        {/* === 정보/설정 탭 === */}
         {activeTab === 'info' && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <section className="space-y-4">
-              <div className="flex items-center gap-2.5 mb-2 px-1"><Coins className="w-7 h-7 sm:w-8 sm:h-8 text-amber-500 bg-amber-50 p-1.5 rounded-full" /><h2 className="text-xl sm:text-2xl font-black text-slate-800 break-keep">정부 지원 및 혜택</h2></div>
-              <div className="grid gap-4 sm:gap-5">
+          <div className="space-y-6 animate-in fade-in duration-300">
+            <section className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+              <div className="flex items-center gap-3 mb-6 border-b border-slate-100 pb-5">
+                 {user.photoURL ? <img src={user.photoURL} className="w-12 h-12 rounded-full border-2 border-slate-100"/> : <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center text-xl">👤</div>}
+                 <div>
+                    <h2 className="text-lg font-black text-slate-800">{user.displayName || '가족'} 님의 계정</h2>
+                    <p className="text-xs text-slate-400 mt-0.5">{user.email || 'Google 계정 연동됨'}</p>
+                 </div>
+              </div>
+              <button onClick={handleLogout} className="w-full py-3.5 bg-slate-100 text-slate-600 font-bold rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-200 transition-colors active:scale-95"><LogOut className="w-5 h-5"/> 로그아웃</button>
+            </section>
+
+            <section className="space-y-4 mt-2">
+              <div className="flex items-center gap-2.5 mb-3 px-1"><Coins className="w-8 h-8 text-amber-500 bg-amber-50 p-2 rounded-2xl" /><h2 className="text-xl font-black text-slate-800 tracking-tight">정부 지원 및 혜택</h2></div>
+              <div className="grid gap-4">
                 {BENEFITS_DATA.map((item, idx) => (
-                  <div key={idx} className="bg-white p-5 sm:p-6 rounded-3xl border border-slate-100 shadow-sm hover:shadow-md transition-shadow">
-                    <h3 className="font-bold text-[16px] sm:text-[17px] text-slate-800 mb-2 flex items-center gap-2 break-keep"><span className="w-1.5 h-1.5 bg-amber-400 rounded-full shrink-0"></span>{item.title}</h3>
-                    <p className="text-[14px] sm:text-[15px] text-slate-600 leading-relaxed break-keep pl-3.5 mb-4">{item.content}</p>
-                    <div className="bg-amber-50/50 rounded-2xl p-4 border border-amber-100/50 mt-2">
-                      <div className="flex items-start gap-2"><HandHeart className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" /><div><span className="block text-sm font-bold text-amber-800 mb-1">어떻게 신청하나요?</span><span className="block text-[13px] sm:text-sm text-amber-700/90 leading-relaxed break-keep">{item.apply}</span></div></div>
+                  <div key={idx} className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
+                    <h3 className="font-bold text-[16px] text-slate-800 mb-2 flex items-center gap-2"><span className="w-1.5 h-1.5 bg-amber-400 rounded-full shrink-0"></span>{item.title}</h3>
+                    <p className="text-[14px] text-slate-600 leading-relaxed break-keep pl-3.5 mb-4">{item.content}</p>
+                    <div className="bg-amber-50/50 rounded-2xl p-4 border border-amber-100/50">
+                      <div className="flex items-start gap-2"><HandHeart className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" /><div><span className="block text-[13px] font-black text-amber-800 mb-1">신청 방법</span><span className="block text-[13px] text-amber-700/90 leading-relaxed break-keep">{item.apply}</span></div></div>
                     </div>
                   </div>
                 ))}
               </div>
             </section>
 
-            <div className="mt-10 pt-10 border-t border-slate-200 space-y-6">
-              <div className="flex gap-2">
-                <button onClick={handleBackup} className="flex-1 py-4 bg-slate-800 text-white rounded-2xl flex items-center justify-center gap-2 font-bold hover:bg-slate-700 transition-all shadow-md"><Download className="w-5 h-5" /> 내 데이터 백업하기</button>
+            <div className="mt-8 pt-8 border-t border-slate-200 space-y-5">
+              <button onClick={handleBackup} className="w-full py-4 bg-slate-800 text-white rounded-2xl flex items-center justify-center gap-2 font-bold hover:bg-slate-700 transition-all shadow-md active:scale-95"><Download className="w-5 h-5" /> 내 데이터 백업하기 (TXT)</button>
+
+              <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-[2rem] p-6 text-white shadow-xl mt-4">
+                <div className="flex items-center gap-3 mb-4"><Coffee className="w-6 h-6 text-amber-400" /><h3 className="text-lg font-black tracking-tight">개발자 응원하기</h3></div>
+                <p className="text-[13px] text-slate-300 leading-relaxed mb-6 break-keep">ReadyBaby는 광고 없이 운영되는 무료 개인 프로젝트입니다. 유용하게 사용하셨다면 개발자에게 따뜻한 커피 한 잔을 선물해주세요! ☕️</p>
+                <button onClick={() => window.open('https://toss.me/yourid', '_blank')} className="w-full py-4 bg-amber-400 text-slate-900 font-black rounded-2xl flex items-center justify-center gap-2 hover:bg-amber-300 transition-all active:scale-95 shadow-lg shadow-amber-400/20">커피 한 잔 후원하기</button>
               </div>
 
-              <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-[2rem] p-6 text-white shadow-xl">
-                <div className="flex items-center gap-3 mb-4"><Coffee className="w-6 h-6 text-amber-400" /><h3 className="text-lg font-black">개발자 응원하기</h3></div>
-                <p className="text-sm text-slate-300 leading-relaxed mb-6 break-keep">ReadyBaby는 광고 없이 깨끗하게 운영되는 개인 프로젝트입니다. <br/>앱이 마음에 드셨다면 개발자에게 따뜻한 커피 한 잔을 선물해주세요! ☕️</p>
-                <button onClick={() => window.open('https://toss.me/yourid', '_blank')} className="w-full py-4 bg-amber-400 text-slate-900 font-black rounded-2xl flex items-center justify-center gap-2 hover:bg-amber-300 transition-all active:scale-95">커피 한 잔 후원하기</button>
+              <div className="grid grid-cols-2 gap-3 mt-4">
+                <button onClick={() => setModalContent({title: '이용약관', text: TERMS_TEXT})} className="p-4 bg-white border border-slate-200 rounded-2xl flex flex-col items-center gap-2 active:bg-slate-50 active:scale-95 transition-all"><ShieldCheck className="w-5 h-5 text-slate-400" /><span className="text-[11px] font-bold text-slate-600">이용약관</span></button>
+                <button onClick={() => setModalContent({title: '책임 제한 안내', text: DISCLAIMER_TEXT})} className="p-4 bg-white border border-slate-200 rounded-2xl flex flex-col items-center gap-2 active:bg-slate-50 active:scale-95 transition-all"><AlertCircle className="w-5 h-5 text-slate-400" /><span className="text-[11px] font-bold text-slate-600">디클레이머</span></button>
               </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <button onClick={() => setModalContent({title: '이용약관', text: TERMS_TEXT})} className="p-4 bg-white border border-slate-200 rounded-2xl flex flex-col items-center gap-2 transition-active active:bg-slate-50"><ShieldCheck className="w-5 h-5 text-slate-400" /><span className="text-xs font-bold text-slate-600">이용약관</span></button>
-                <button onClick={() => setModalContent({title: '책임 제한 안내', text: DISCLAIMER_TEXT})} className="p-4 bg-white border border-slate-200 rounded-2xl flex flex-col items-center gap-2 transition-active active:bg-slate-50"><AlertCircle className="w-5 h-5 text-slate-400" /><span className="text-xs font-bold text-slate-600">디클레이머</span></button>
-              </div>
-              <div className="text-center pb-10"><p className="text-[10px] text-slate-400 font-medium uppercase tracking-widest">© 2026 ReadyBaby. Developed by Park Geunhong</p></div>
+              <div className="text-center pb-8 pt-4"><p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">© 2026 ReadyBaby</p></div>
             </div>
           </div>
         )}
+      </div>
+
+      {/* --- 모바일 앱 스타일 하단 네비게이션 바 --- */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-100 z-40 pb-safe shadow-[0_-4px_20px_-10px_rgba(0,0,0,0.05)]">
+        <div className="max-w-md mx-auto flex justify-around items-center px-2 py-2">
+          {[ 
+            { id: 'checklist', label: '체크리스트', icon: <ListTodo className="w-6 h-6" /> }, 
+            { id: 'baby_gear', label: '육아템', icon: <ShoppingBag className="w-6 h-6" /> }, 
+            { id: 'health', label: '건강수첩', icon: <Activity className="w-6 h-6" /> }, 
+            { id: 'diary', label: '임신일기', icon: <BookHeart className="w-6 h-6" /> }, 
+            { id: 'info', label: '정보/설정', icon: <Info className="w-6 h-6" /> }
+          ].map(tab => (
+            <button 
+              key={tab.id} 
+              onClick={() => setActiveTab(tab.id)} 
+              className={`flex flex-col items-center justify-center w-full py-2 gap-1.5 transition-all active:scale-95 ${activeTab === tab.id ? 'text-rose-500' : 'text-slate-400 hover:text-slate-600'}`}
+            >
+              <div className={`${activeTab === tab.id ? 'bg-rose-50 p-1.5 rounded-xl' : 'p-1.5'}`}>
+                {tab.icon}
+              </div>
+              <span className={`text-[10px] font-bold tracking-tight ${activeTab === tab.id ? 'text-rose-600' : 'text-slate-500'}`}>{tab.label}</span>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
