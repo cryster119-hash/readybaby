@@ -661,7 +661,7 @@ export default function App() {
               <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-[2rem] p-6 text-white shadow-xl mt-4">
                 <div className="flex items-center gap-3 mb-4"><Coffee className="w-6 h-6 text-amber-400" /><h3 className="text-lg font-black tracking-tight">개발자 응원하기</h3></div>
                 <p className="text-[13px] text-slate-300 leading-relaxed mb-6 break-keep">ReadyBaby는 광고 없이 운영되는 무료 개인 프로젝트입니다. 유용하게 사용하셨다면 개발자에게 따뜻한 커피 한 잔을 선물해주세요! ☕️</p>
-                <button onClick={() => window.open('https:qr.kakaopay.com/Ej80O3SQW', '_blank')} className="w-full py-4 bg-amber-400 text-slate-900 font-black rounded-2xl flex items-center justify-center gap-2 hover:bg-amber-300 transition-all active:scale-95 shadow-lg shadow-amber-400/20">커피 한 잔 후원하기</button>
+                <button onClick={() => window.open('https://qr.kakaopay.com/Ej80O3SQW', '_blank')} className="w-full py-4 bg-amber-400 text-slate-900 font-black rounded-2xl flex items-center justify-center gap-2 hover:bg-amber-300 transition-all active:scale-95 shadow-lg shadow-amber-400/20">커피 한 잔 후원하기</button>
               </div>
 
               <div className="grid grid-cols-2 gap-3 mt-4">
