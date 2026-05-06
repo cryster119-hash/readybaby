@@ -22,12 +22,7 @@ const firebaseConfig = {
 };
 
 
-// 캔버스 환경과 로컬 환경 동시 지원
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : localFirebaseConfig;
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const environmentAppId = typeof __app_id !== 'undefined' ? __app_id : 'readybaby-app';
+
 
 // --- 초기 데이터셋 ---
 const INITIAL_CHECKLIST = [
